@@ -34,12 +34,12 @@ subprojects {
     apply(plugin = "com.lagradost.cloudstream3.gradle")
 
     cloudstream {
-        setRepo(System.getenv("GITHUB_REPOSITORY") ?: "https://github.com/phisher98/CXXX")
-        authors = listOf("Phisher98")
+        setRepo(System.getenv("GITHUB_REPOSITORY") ?: "https://github.com/Phatbn11/DVXX")
+        authors = listOf("Phatbn11")
     }
 
     android {
-        namespace = "com.Phisher98"
+        namespace = "com.Phatbn11"
 
         defaultConfig {
             minSdk = 21
