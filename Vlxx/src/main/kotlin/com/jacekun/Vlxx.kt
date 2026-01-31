@@ -10,7 +10,8 @@ import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.utils.Qualities.getQualityFromName
 import com.lagradost.nicehttp.NiceResponse
 import com.lagradost.cloudstream3.network.CloudflareKiller
-
+import com.lagradost.cloudstream3.utils.AppUtils
+import com.lagradost.cloudstream3.utils.Qualities
 class Vlxx : MainAPI() {
     private val DEV = "DevDebug"
     private val globaltvType = TvType.NSFW
