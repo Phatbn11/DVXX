@@ -150,15 +150,17 @@ class Vlxx : MainAPI() {
 
                 if (fileUrl != null) {
                     try {
-                        val link = ExtractorLink(
-                            source = this.name,
-                            name = this.name,
-                            url = fileUrl,
-                            referer = data,
-                            quality = Qualities.getQualityFromName(label), 
-                            isM3u8 = fileUrl.endsWith("m3u8")
-                        )
-                        callback.invoke(link)
+                       callback.invoke(
+                    newExtractorLink(
+                        source = this.name,
+                        name = this.name,
+                        url = fileUrl,
+                        referer = data
+                    ) {
+                        this.quality = Qualities.getQualityFromName(label)
+                        this.isM3u8 = fileUrl.endsWith(".m3u8")
+                    }
+                )
                     } catch (e: Exception) {
                         AppUtils.logError(e)
                     }
