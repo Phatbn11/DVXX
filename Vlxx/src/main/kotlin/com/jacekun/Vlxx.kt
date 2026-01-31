@@ -1,109 +1,102 @@
 package com.phatbn11
 
 import android.annotation.SuppressLint
-import org.jsoup.nodes.Element
-import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.Actor
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.webkit.*
+import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.jsoup.nodes.Element
 import kotlin.coroutines.resume
-import android.content.Context
-
 
 class Vlxx : MainAPI() {
-    private val DEV = "DevDebug"
-    private val globaltvType = TvType.NSFW
 
     override var name = "Vlxx"
     override var mainUrl = "https://vlxx.sex"
-    override val hasMainPage = true
     override var lang = "en"
+    override val hasMainPage = true
     override val hasQuickSearch = false
     override val supportedTypes = setOf(TvType.NSFW)
 
+    /* ================= MAIN PAGE ================= */
+
     private fun Element.toMainPageResult(): SearchResponse? {
-        val title = this.selectFirst("div.data h3 a")?.text() ?: return null
-        val href = fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
-        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("src"))
+        val title = selectFirst("div.data h3 a")?.text() ?: return null
+        val href = fixUrlNull(selectFirst("a")?.attr("href")) ?: return null
+        val poster = fixUrlNull(selectFirst("img")?.attr("src"))
+
         return newMovieSearchResponse(title, href, TvType.NSFW) {
-            this.posterUrl = posterUrl
+            posterUrl = poster
         }
     }
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+    override suspend fun getMainPage(
+        page: Int,
+        request: MainPageRequest
+    ): HomePageResponse {
         val url = if (page <= 1) request.data else "${request.data}page/$page/"
-        val document = app.get(url).document
-        val home = document.select("div.items article").mapNotNull {
-            it.toMainPageResult()
-        }
-        return newHomePageResponse(request.name, home)
+        val doc = app.get(url).document
+
+        val list = doc.select("div.items article")
+            .mapNotNull { it.toMainPageResult() }
+
+        return newHomePageResponse(request.name, list)
     }
+
+    /* ================= SEARCH ================= */
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
-        val url = if (page <= 1) {
+        val url = if (page <= 1)
             "$mainUrl/?s=$query"
-        } else {
+        else
             "$mainUrl/page/$page/?s=$query"
-        }
 
-        val response = app.get(url).document
-        val aramaCevap = response.select("div.result-item").mapNotNull {
-            it.toSearchResult()
-        }
-        val hasNext = response.selectFirst("div.pagination a.arrow_pag") != null ||
-                response.selectFirst("div.resppages a") != null
+        val doc = app.get(url).document
 
-        return newSearchResponseList(aramaCevap, hasNext = hasNext)
+        val results = doc.select("div.items article")
+            .mapNotNull { it.toMainPageResult() }
+
+        val hasNext = doc.selectFirst("a.next") != null
+
+        return newSearchResponseList(results, hasNext)
     }
 
-    private fun Element.toSearchResult(): SearchResponse? {
-        val titleElement = this.selectFirst("div.details div.title a")
-        val title = titleElement?.text() ?: return null
-        val href = titleElement.attr("href")
-        val posterUrl = fixUrlNull(this.selectFirst("div.image img")?.attr("src"))
-
-        return newMovieSearchResponse(title, href, TvType.NSFW) {
-            this.posterUrl = posterUrl
-        }
+    override suspend fun quickSearch(query: String): List<SearchResponse>? {
+        return search(query, 1).results
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query, 1)
+    /* ================= LOAD ================= */
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url).document
+        val doc = app.get(url).document
 
-        val title = document.selectFirst("div.data h1")?.text()?.trim() ?: ""
-        val poster = document.selectFirst("div.poster img")?.attr("src")
-        val banner = document.selectFirst("div.backdrop img")?.attr("src") ?: poster
-        val description = document.selectFirst("#info .wp-content p")?.text()?.trim()
+        val title = doc.selectFirst("div.data h1")?.text()?.trim() ?: ""
+        val poster = fixUrlNull(doc.selectFirst("div.poster img")?.attr("src"))
+        val banner = fixUrlNull(doc.selectFirst("div.backdrop img")?.attr("src")) ?: poster
+        val plot = doc.selectFirst("#info .wp-content p")?.text()?.trim()
 
-        val actors = document.select("#cast .persons .person").mapNotNull {
+        val actors = doc.select("#cast .persons .person").mapNotNull {
             val name = it.selectFirst("meta[itemprop=name]")?.attr("content")
                 ?: it.selectFirst(".name a")?.text()
-            val image = it.selectFirst("img")?.attr("src")
-            if (name.isNullOrBlank()) return@mapNotNull null
-            Actor(name, image)
+            val img = fixUrlNull(it.selectFirst("img")?.attr("src"))
+            if (name.isNullOrBlank()) null else Actor(name, img)
         }
 
-        val episodes = document.select("#seasons .se-c .se-a ul li").mapNotNull {
+        val episodes = doc.select("#seasons .se-c .se-a ul li").mapNotNull {
+            val epUrl = it.selectFirst(".episodiotitle a")?.attr("href") ?: return@mapNotNull null
             val epNum = it.selectFirst(".num")?.text()?.toIntOrNull()
             val epName = it.selectFirst(".episodiotitle a")?.text()
-            val epUrl = it.selectFirst(".episodiotitle a")?.attr("href")
-            if (epUrl == null) return@mapNotNull null
+
             newEpisode(fixUrl(epUrl)) {
-                this.name = epName
-                this.episode = epNum
+                name = epName
+                episode = epNum
             }
         }
 
-        val watchBtn = document.selectFirst("div.sgeneros a")?.attr("href")
+        val watchBtn = doc.selectFirst("div.sgeneros a")?.attr("href")
 
         return if (episodes.isNotEmpty()) {
             newTvSeriesLoadResponse(
@@ -112,40 +105,35 @@ class Vlxx : MainAPI() {
                 type = TvType.NSFW,
                 episodes = episodes
             ) {
-                this.posterUrl = poster
-                this.backgroundPosterUrl = banner
-                this.plot = description
-                addActors(actors)
-            }
-        } else if (watchBtn != null) {
-            val fullUrl = fixUrl(watchBtn)
-            newMovieLoadResponse(
-                name = title,
-                url = url,
-                type = TvType.NSFW,
-                dataUrl = fullUrl
-            ) {
-                this.posterUrl = poster
-                this.backgroundPosterUrl = banner
-                this.plot = description
+                posterUrl = poster
+                backgroundPosterUrl = banner
+                this.plot = plot
                 addActors(actors)
             }
         } else {
-            val movieSlug = url.trimEnd('/').substringAfterLast("/")
-            val constructedUrl = "$mainUrl/watch-$movieSlug?sv=1&ep=1"
+            val playUrl = when {
+                watchBtn != null -> fixUrl(watchBtn)
+                else -> {
+                    val slug = url.trimEnd('/').substringAfterLast("/")
+                    "$mainUrl/watch-$slug?sv=1&ep=1"
+                }
+            }
+
             newMovieLoadResponse(
                 name = title,
                 url = url,
                 type = TvType.NSFW,
-                dataUrl = constructedUrl
+                dataUrl = playUrl
             ) {
-                this.posterUrl = poster
-                this.backgroundPosterUrl = banner
-                this.plot = description
+                posterUrl = poster
+                backgroundPosterUrl = banner
+                this.plot = plot
                 addActors(actors)
             }
         }
     }
+
+    /* ================= LINKS ================= */
 
     @SuppressLint("SetJavaScriptEnabled", "PrivateApi")
     override suspend fun loadLinks(
@@ -154,12 +142,14 @@ class Vlxx : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+
         val context = Class.forName("android.app.ActivityThread")
             .getMethod("currentApplication")
             .invoke(null) as? Context ?: return false
 
-        val capturedUrl = suspendCancellableCoroutine<String?> { cont ->
+        val m3u8 = suspendCancellableCoroutine<String?> { cont ->
             Handler(Looper.getMainLooper()).post {
+
                 val webView = WebView(context).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
@@ -168,13 +158,14 @@ class Vlxx : MainAPI() {
                 }
 
                 webView.webViewClient = object : WebViewClient() {
+
                     override fun shouldInterceptRequest(
                         view: WebView,
                         request: WebResourceRequest
                     ): WebResourceResponse? {
-                        val url = request.url.toString()
-                        if (url.contains(".m3u8") && cont.isActive) {
-                            cont.resume(url)
+                        val reqUrl = request.url.toString()
+                        if (reqUrl.contains(".m3u8") && cont.isActive) {
+                            cont.resume(reqUrl)
                             view.post { view.destroy() }
                         }
                         return super.shouldInterceptRequest(view, request)
@@ -185,9 +176,12 @@ class Vlxx : MainAPI() {
                             """
                             setInterval(() => {
                                 if (typeof jwplayer === 'function') jwplayer().play();
-                                document.querySelector('.jw-display-icon-display, .videoapi-btn')?.click();
+                                document.querySelector(
+                                    '.jw-display-icon-display, .videoapi-btn'
+                                )?.click();
                             }, 1000);
-                        """.trimIndent(), null
+                            """.trimIndent(),
+                            null
                         )
                     }
                 }
@@ -203,16 +197,15 @@ class Vlxx : MainAPI() {
             }
         }
 
-        return capturedUrl?.let { found ->
-            // Build ExtractorLink using new API: pass fields directly
-            callback.invoke(
+        return m3u8?.let {
+            callback(
                 newExtractorLink(
-                    source = this.name,
-                    name = this.name,
-                    url = found,
-                    quality = 720,
+                    source = name,
+                    name = name,
+                    url = it,
+                    quality = Qualities.P720.value,
                     isM3u8 = true,
-                    headers = mapOf("Referer" to "https://pinkueiga.net/")
+                    headers = mapOf("Referer" to mainUrl)
                 )
             )
             true
