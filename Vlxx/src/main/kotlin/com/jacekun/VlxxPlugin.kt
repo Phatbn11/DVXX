@@ -1,13 +1,15 @@
 package com.jacekun
 
+import android.content.Context
+import com.byayzen.xVideosExtractor
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
-import android.content.Context
 
 @CloudstreamPlugin
 class VlxxPlugin: Plugin() {
-    override fun load(context: Context) {
-        // All providers should be added in this manner. Please don't edit the providers list directly.
+    override fun load() {
         registerMainAPI(Vlxx())
+        registerExtractorAPI(Vlxx())
     }
+}
 }
