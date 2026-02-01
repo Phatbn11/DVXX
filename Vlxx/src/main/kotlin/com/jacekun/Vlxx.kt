@@ -11,7 +11,6 @@ import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.getQualityFromName
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.nicehttp.NiceResponse
 
 class Vlxx : MainAPI() {
@@ -30,13 +29,6 @@ class Vlxx : MainAPI() {
         var count = 0
         var resp = app.get(url, referer = referer, interceptor = interceptor)
         Log.i(DEV, "Page Response => ${resp}")
-//        while (!resp.isSuccessful) {
-//            resp = app.get(url, interceptor = interceptor)
-//            count++
-//            if (count > 4) {
-//                return resp
-//            }
-//        }
         return resp
     }
 
@@ -61,7 +53,6 @@ class Vlxx : MainAPI() {
                     url = link,
                     type = globaltvType,
                 ) {
-                    //this.apiName = apiName
                     this.posterUrl = img
                 }
             }.distinctBy { it.url }
@@ -80,22 +71,21 @@ class Vlxx : MainAPI() {
         return getPage("$mainUrl/search/${query}/", mainUrl).document
             .select("#container .box .video-list")
             .mapNotNull {
-            val link = fixUrlNull(it.select("a").attr("href")) ?: return@mapNotNull null
-            val imgArticle = it.select(".video-image").attr("src")
-            val name = it.selectFirst(".video-name")?.text() ?: ""
-            val year = null
+                val link = fixUrlNull(it.select("a").attr("href")) ?: return@mapNotNull null
+                val imgArticle = it.select(".video-image").attr("src")
+                val name = it.selectFirst(".video-name")?.text() ?: ""
+                val year = null
 
-            newMovieSearchResponse(
-                name = name,
-                url = link,
-                type = globaltvType,
-            ) {
-                //this.apiName = apiName
-                this.posterUrl = imgArticle
-                this.year = year
-                this.posterHeaders = interceptor.getCookieHeaders(url).toMap()
-            }
-        }.distinctBy { it.url }
+                newMovieSearchResponse(
+                    name = name,
+                    url = link,
+                    type = globaltvType,
+                ) {
+                    this.posterUrl = imgArticle
+                    this.year = year
+                    this.posterHeaders = interceptor.getCookieHeaders(url).toMap()
+                }
+            }.distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -106,7 +96,7 @@ class Vlxx : MainAPI() {
         val title = container?.selectFirst("h2")?.text() ?: "No Title"
         val descript = container?.selectFirst("div.video-description")?.text()
         val year = null
-        val poster = null //No image on load page
+        val poster = null
         return newMovieLoadResponse(
             name = title,
             url = url,
@@ -127,66 +117,169 @@ class Vlxx : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val pathSplits = data.split("/")
-        val id = pathSplits[pathSplits.size - 2]
-        Log.i(DEV, "Data -> ${data} id -> ${id}")
-        val res = app.post(
-            "${mainUrl}/ajax.php",
-            headers = interceptor.getCookieHeaders(data).toMap(),
-            data = mapOf(
-                Pair("vlxx_server", "1"),
-                Pair("id", id),
-                Pair("server", "1"),
-            ),
-            referer = mainUrl
-        ).text
-        Log.i(DEV, "res ${res}")
+        try {
+            val pathSplits = data.split("/")
+            val id = pathSplits[pathSplits.size - 2]
+            Log.i(DEV, "Data -> $data")
+            Log.i(DEV, "ID -> $id")
+            
+            // Lấy cookies
+            val cookies = interceptor.getCookieHeaders(data).toMap()
+            Log.i(DEV, "Cookies: $cookies")
+            
+            // Gửi POST request
+            val res = app.post(
+                "$mainUrl/ajax.php",
+                headers = cookies,
+                data = mapOf(
+                    "vlxx_server" to "1",
+                    "id" to id,
+                    "server" to "1"
+                ),
+                referer = data
+            ).text
+            
+            Log.i(DEV, "Response từ ajax: $res")
+            
+            // Kiểm tra response có hợp lệ không
+            if (res.isBlank()) {
+                Log.e(DEV, "Response rỗng!")
+                return false
+            }
+            
+            if (!res.contains("sources")) {
+                Log.e(DEV, "Response không chứa sources!")
+                Log.i(DEV, "Full response: $res")
+                return false
+            }
 
-        val json = getParamFromJS(res, "var opts = {\\r\\n\\t\\t\\t\\t\\t\\tsources:", "}]")
-        Log.i(DEV, "json ${json}")
-        json?.let {
-            tryParseJson<List<Sources?>>(it)?.forEach { vidlink ->
-                vidlink?.file?.let { file ->
-                    val extractorLinkType = if (file.endsWith("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    try {
-                        callback.invoke(
-                            newExtractorLink(
-                                source = file,
-                                name = this.name,
-                                url = file,
-                                type = extractorLinkType
-                            ).apply {
-                                this.referer = data
-                                this.quality = getQualityFromName(vidlink.label)
-                            }
+            // Thử parse JSON với nhiều patterns
+            var json = getParamFromJS(res, "var opts = {\\r\\n\\t\\t\\t\\t\\t\\tsources:", "}]")
+            
+            if (json == null) {
+                Log.w(DEV, "Không parse được với pattern 1, thử pattern 2...")
+                json = getParamFromJS(res, "sources:", "}]")
+            }
+            
+            if (json == null) {
+                Log.w(DEV, "Không parse được với pattern 2, thử pattern 3...")
+                json = getParamFromJS(res, "sources: ", "}]")
+            }
+            
+            if (json == null) {
+                Log.w(DEV, "Không parse được với pattern 3, thử pattern 4...")
+                json = getParamFromJS(res, "\"sources\":", "}]")
+            }
+            
+            if (json == null) {
+                Log.e(DEV, "Không thể parse JSON từ response!")
+                return false
+            }
+            
+            Log.i(DEV, "JSON parsed: $json")
+            parseAndAddLinks(json, data, callback)
+            return true
+            
+        } catch (e: Exception) {
+            Log.e(DEV, "Lỗi trong loadLinks: ${e.message}")
+            e.printStackTrace()
+            logError(e)
+            return false
+        }
+    }
+
+    private fun parseAndAddLinks(
+        json: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        try {
+            val sourcesList = tryParseJson<List<Sources?>>(json)
+            
+            if (sourcesList == null || sourcesList.isEmpty()) {
+                Log.e(DEV, "Không parse được sources list hoặc list rỗng")
+                return
+            }
+            
+            sourcesList.forEach { vidlink ->
+                if (vidlink == null) {
+                    Log.w(DEV, "Source item null, bỏ qua")
+                    return@forEach
+                }
+                
+                val file = vidlink.file
+                if (file == null || file.isBlank()) {
+                    Log.w(DEV, "File URL null hoặc rỗng, bỏ qua")
+                    return@forEach
+                }
+                
+                Log.i(DEV, "Tìm thấy link: $file - Quality: ${vidlink.label}")
+                
+                val extractorLinkType = if (file.endsWith("m3u8")) {
+                    ExtractorLinkType.M3U8
+                } else {
+                    ExtractorLinkType.VIDEO
+                }
+                
+                try {
+                    callback.invoke(
+                        ExtractorLink(
+                            source = this.name,
+                            name = this.name,
+                            url = file,
+                            referer = referer,
+                            quality = getQualityFromName(vidlink.label),
+                            type = extractorLinkType
                         )
-                    } catch (e: Exception) {
-                        logError(e)
-                    }
+                    )
+                    Log.i(DEV, "Đã thêm link thành công: $file")
+                } catch (e: Exception) {
+                    Log.e(DEV, "Lỗi khi thêm link: ${e.message}")
+                    e.printStackTrace()
+                    logError(e)
                 }
             }
+        } catch (e: Exception) {
+            Log.e(DEV, "Lỗi trong parseAndAddLinks: ${e.message}")
+            e.printStackTrace()
+            logError(e)
         }
-        return true
-
     }
 
     private fun getParamFromJS(str: String, key: String, keyEnd: String): String? {
         try {
-            val firstIndex = str.indexOf(key) + key.length // 4 to index point to first char.
-            val temp = str.substring(firstIndex)
-            val lastIndex = temp.indexOf(keyEnd) + (keyEnd.length)
-            val jsonConfig = temp.substring(0, lastIndex) //
-            Log.i(DEV, "jsonConfig ${jsonConfig}")
+            val firstIndex = str.indexOf(key)
+            if (firstIndex == -1) {
+                Log.w(DEV, "Không tìm thấy key: $key")
+                return null
+            }
+            
+            val startIndex = firstIndex + key.length
+            val temp = str.substring(startIndex)
+            val lastIndex = temp.indexOf(keyEnd)
+            
+            if (lastIndex == -1) {
+                Log.w(DEV, "Không tìm thấy keyEnd: $keyEnd")
+                return null
+            }
+            
+            val jsonConfig = temp.substring(0, lastIndex + keyEnd.length)
+            Log.i(DEV, "jsonConfig raw: $jsonConfig")
 
-            val re = jsonConfig.replace("\\r", "")
+            val cleaned = jsonConfig
+                .replace("\\r", "")
                 .replace("\\t", "")
                 .replace("\\\"", "\"")
                 .replace("\\\\\\/", "/")
                 .replace("\\n", "")
+                .trim()
 
-            return re
+            Log.i(DEV, "jsonConfig cleaned: $cleaned")
+            return cleaned
+            
         } catch (e: Exception) {
-            //e.printStackTrace()
+            Log.e(DEV, "Lỗi trong getParamFromJS: ${e.message}")
+            e.printStackTrace()
             logError(e)
         }
         return null
