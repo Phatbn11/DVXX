@@ -235,7 +235,6 @@ class Vlxx : MainAPI() {
                 Log.d(DEV, "Response does not contain 'sources'")
             }
             
-            // Fallback
             Log.d(DEV, "Trying fallback URL extraction")
             val urlRegex = Regex("(https?://[^\\s\"'<>]+\\.m3u8[^\\s\"'<>]*)")
             val urls = urlRegex.findAll(responseText)
@@ -278,5 +277,3 @@ class Vlxx : MainAPI() {
         @JsonProperty("label") val label: String? = null
     )
 }
-
-
