@@ -18,7 +18,7 @@ import kotlinx.coroutines.coroutineScope
 // Định nghĩa lớp Provider chính, kế thừa từ MainAPI
 class XnhauProvider : MainAPI() {
     // --- Thông tin cơ bản của Provider ---
-    override var mainUrl = "https://xnhau.im"
+    override var mainUrl = "https://xnhau.hot"
     override var name = "xNhau"
     override val hasMainPage = true
     override var lang = "vi"
