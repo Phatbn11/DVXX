@@ -1,4 +1,4 @@
-package com.jacekun
+package com.DariusBETA
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 
@@ -8,3 +8,4 @@ class VlxxPlugin : Plugin() {
         registerMainAPI(Vlxx())
     }
 }
+
