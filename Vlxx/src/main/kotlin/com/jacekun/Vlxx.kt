@@ -27,9 +27,8 @@ class Vlxx : MainAPI() {
     private val interceptor = CloudflareKiller()
 
     private suspend fun getPage(url: String, referer: String): NiceResponse {
-        var count = 0
-        var resp = app.get(url, referer = referer, interceptor = interceptor)
-        Log.i(DEV, "Page Response => ${resp}")
+        val resp = app.get(url, referer = referer, interceptor = interceptor)
+        Log.i(DEV, "Page Response Code => ${resp.code}")
         return resp
     }
 
@@ -37,18 +36,22 @@ class Vlxx : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val apiName = this.name
         val document = getPage(mainUrl, mainUrl).document
         val all = ArrayList<HomePageList>()
-        val title = "Homepage"
-        Log.i(DEV, "Fetching videos..")
-        val elements = document.select("div#video-list > div.video-item")
+        
+        Log.i(DEV, "Fetching homepage videos...")
+        
+        // Try multiple selectors for homepage
+        var elements = document.select("div#video-list > div.video-item")
             .mapNotNull {
                 val firstA = it.selectFirst("a")
                 val link = fixUrlNull(firstA?.attr("href")) ?: return@mapNotNull null
-                val img = it.selectFirst("img")?.attr("data-original")
-                val name = it.selectFirst("div.video-name")?.text() ?: it.text()
-                Log.i(DEV, "Result => $link")
+                val img = it.selectFirst("img")?.attr("data-original") 
+                    ?: it.selectFirst("img")?.attr("src")
+                val name = it.selectFirst("div.video-name")?.text() 
+                    ?: it.selectFirst("a")?.attr("title") 
+                    ?: it.text()
+                Log.i(DEV, "Homepage item => $name | $link")
                 newMovieSearchResponse(
                     name = name,
                     url = link,
@@ -58,55 +61,108 @@ class Vlxx : MainAPI() {
                 }
             }.distinctBy { it.url }
 
-        if (elements.isNotEmpty()) {
-            all.add(
-                HomePageList(
-                    title, elements
-                )
-            )
+        // If first selector fails, try alternative
+        if (elements.isEmpty()) {
+            Log.i(DEV, "First selector empty, trying alternative...")
+            elements = document.select("div.video-item, .video-block, .item")
+                .mapNotNull {
+                    val link = fixUrlNull(it.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
+                    val img = it.selectFirst("img")?.attr("data-original") 
+                        ?: it.selectFirst("img")?.attr("src")
+                    val name = it.selectFirst(".video-name, .title, h3, h4")?.text() 
+                        ?: it.selectFirst("a")?.attr("title") 
+                        ?: "Video"
+                    Log.i(DEV, "Alt homepage item => $name | $link")
+                    newMovieSearchResponse(
+                        name = name,
+                        url = link,
+                        type = globaltvType,
+                    ) {
+                        this.posterUrl = img
+                    }
+                }.distinctBy { it.url }
         }
+
+        if (elements.isNotEmpty()) {
+            all.add(HomePageList("Homepage", elements))
+        }
+        
+        Log.i(DEV, "Total homepage items: ${elements.size}")
         return newHomePageResponse(all)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        return getPage("$mainUrl/search/${query}/", mainUrl).document
-            .select("#container .box .video-list")
+        val searchUrl = "$mainUrl/search/${query}/"
+        Log.i(DEV, "Search URL: $searchUrl")
+        
+        val document = getPage(searchUrl, mainUrl).document
+        
+        // Try multiple selectors
+        var results = document.select(".video-list .video-item, #video-list .video-item")
             .mapNotNull {
-                val link = fixUrlNull(it.select("a").attr("href")) ?: return@mapNotNull null
-                val imgArticle = it.select(".video-image").attr("src")
-                val name = it.selectFirst(".video-name")?.text() ?: ""
-                val year = null
-
+                val link = fixUrlNull(it.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
+                val img = it.selectFirst("img")?.attr("data-original") 
+                    ?: it.selectFirst("img")?.attr("src")
+                val name = it.selectFirst(".video-name")?.text() 
+                    ?: it.selectFirst("a")?.attr("title") 
+                    ?: ""
+                Log.i(DEV, "Search result => $name | $link")
                 newMovieSearchResponse(
                     name = name,
                     url = link,
                     type = globaltvType,
                 ) {
-                    this.posterUrl = imgArticle
-                    this.year = year
-                    this.posterHeaders = interceptor.getCookieHeaders(url).toMap()
+                    this.posterUrl = img
+                    this.posterHeaders = interceptor.getCookieHeaders(searchUrl).toMap()
                 }
             }.distinctBy { it.url }
+
+        // Try alternative selector if empty
+        if (results.isEmpty()) {
+            Log.i(DEV, "First search selector empty, trying alternative...")
+            results = document.select("div.video-item, .video-block, .item")
+                .mapNotNull {
+                    val link = fixUrlNull(it.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
+                    val img = it.selectFirst("img")?.attr("data-original") 
+                        ?: it.selectFirst("img")?.attr("src")
+                    val name = it.selectFirst(".video-name, .title, h3")?.text() 
+                        ?: it.selectFirst("a")?.attr("title") 
+                        ?: ""
+                    Log.i(DEV, "Alt search result => $name | $link")
+                    newMovieSearchResponse(
+                        name = name,
+                        url = link,
+                        type = globaltvType,
+                    ) {
+                        this.posterUrl = img
+                        this.posterHeaders = interceptor.getCookieHeaders(searchUrl).toMap()
+                    }
+                }.distinctBy { it.url }
+        }
+        
+        Log.i(DEV, "Total search results: ${results.size}")
+        return results
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val apiName = this.name
         val doc = getPage(url, url).document
+        Log.i(DEV, "Loading page: $url")
 
-        val container = doc.selectFirst("div#container")
-        val title = container?.selectFirst("h2")?.text() ?: "No Title"
-        val descript = container?.selectFirst("div.video-description")?.text()
-        val year = null
-        val poster = null
+        val container = doc.selectFirst("div#container, .container, .content")
+        val title = container?.selectFirst("h2, h1, .title")?.text() ?: "No Title"
+        val descript = container?.selectFirst("div.video-description, .description, p")?.text()
+        val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")
+            ?: doc.selectFirst("video")?.attr("poster")
+        
+        Log.i(DEV, "Loaded: $title")
+        
         return newMovieLoadResponse(
             name = title,
             url = url,
             dataUrl = url,
             type = globaltvType,
         ) {
-            this.apiName = apiName
             this.posterUrl = poster
-            this.year = year
             this.plot = descript
             this.posterHeaders = interceptor.getCookieHeaders(url).toMap()
         }
@@ -119,13 +175,17 @@ class Vlxx : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         try {
-            val pathSplits = data.split("/")
-            val id = pathSplits[pathSplits.size - 2]
-            Log.i(DEV, "Data -> $data id -> $id")
+            Log.i(DEV, "Loading links for: $data")
+            
+            val pathSplits = data.split("/").filter { it.isNotEmpty() }
+            val id = pathSplits.getOrNull(pathSplits.size - 1) ?: pathSplits.last()
+            Log.i(DEV, "Extracted ID: $id")
+            
+            val cookies = interceptor.getCookieHeaders(data).toMap()
             
             val res = app.post(
                 "$mainUrl/ajax.php",
-                headers = interceptor.getCookieHeaders(data).toMap(),
+                headers = cookies + mapOf("X-Requested-With" to "XMLHttpRequest"),
                 data = mapOf(
                     "vlxx_server" to "1",
                     "id" to id,
@@ -134,29 +194,50 @@ class Vlxx : MainAPI() {
                 referer = data
             ).text
             
-            Log.i(DEV, "res $res")
+            Log.i(DEV, "Ajax response length: ${res.length}")
+            Log.i(DEV, "Ajax response preview: ${res.take(500)}")
 
-            // Try multiple parsing patterns
-            var json = getParamFromJS(res, "var opts = {\\r\\n\\t\\t\\t\\t\\t\\tsources:", "}]")
+            // Try to find video URL in response with multiple methods
+            var foundLinks = false
             
-            if (json == null) {
-                json = getParamFromJS(res, "sources:", "}]")
+            // Method 1: Parse sources JSON
+            val patterns = listOf(
+                "sources:" to "}]",
+                "sources: " to "}]",
+                "\"sources\":" to "}]",
+                "'sources':" to "}]"
+            )
+            
+            for ((key, end) in patterns) {
+                val json = getParamFromJS(res, key, end)
+                if (json != null) {
+                    Log.i(DEV, "Found JSON with pattern '$key': $json")
+                    tryParseJson<List<Sources?>>(json)?.forEach { vidlink ->
+                        vidlink?.file?.let { file ->
+                            Log.i(DEV, "Parsed link: $file (${vidlink.label})")
+                            callback.invoke(
+                                newExtractorLink(
+                                    source = this.name,
+                                    name = this.name,
+                                    url = file,
+                                    type = if (file.endsWith("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                ).apply {
+                                    this.referer = data
+                                    this.quality = getQualityFromName(vidlink.label)
+                                }
+                            )
+                            foundLinks = true
+                        }
+                    }
+                    if (foundLinks) break
+                }
             }
             
-            if (json == null) {
-                json = getParamFromJS(res, "sources: ", "}]")
-            }
-            
-            if (json == null) {
-                json = getParamFromJS(res, "\"sources\":", "}]")
-            }
-            
-            // Try to find any .m3u8 or .mp4 URLs directly in response
-            if (json == null) {
-                Log.e(DEV, "All patterns failed, trying direct URL extraction")
+            // Method 2: Direct URL extraction
+            if (!foundLinks) {
+                Log.i(DEV, "JSON parse failed, trying direct URL extraction")
                 val urlPattern = Regex("(https?://[^\"'\\s]+\\.(m3u8|mp4)[^\"'\\s]*)")
-                val matches = urlPattern.findAll(res)
-                matches.forEach { match ->
+                urlPattern.findAll(res).forEach { match ->
                     val url = match.groupValues[1]
                     Log.i(DEV, "Found direct URL: $url")
                     callback.invoke(
@@ -169,40 +250,47 @@ class Vlxx : MainAPI() {
                             this.referer = data
                         }
                     )
+                    foundLinks = true
                 }
-                return matches.count() > 0
             }
             
-            Log.i(DEV, "json $json")
-            
-            tryParseJson<List<Sources?>>(json)?.forEach { vidlink ->
-                vidlink?.file?.let { file ->
-                    Log.i(DEV, "Found link: $file")
-                    val extractorLinkType = if (file.endsWith("m3u8")) 
-                        ExtractorLinkType.M3U8 
-                    else 
-                        ExtractorLinkType.VIDEO
+            // Method 3: Check for embed player in original page
+            if (!foundLinks) {
+                Log.i(DEV, "Trying to find embed player in page")
+                val doc = getPage(data, data).document
+                val iframeSrc = doc.selectFirst("iframe[src*=player], iframe[src*=embed]")?.attr("src")
+                if (iframeSrc != null) {
+                    Log.i(DEV, "Found iframe: $iframeSrc")
+                    val iframeDoc = getPage(fixUrl(iframeSrc), data).document
+                    val scriptText = iframeDoc.select("script").joinToString("\n") { it.html() }
                     
-                    try {
+                    urlPattern.findAll(scriptText).forEach { match ->
+                        val url = match.groupValues[1]
+                        Log.i(DEV, "Found URL in iframe: $url")
                         callback.invoke(
                             newExtractorLink(
                                 source = this.name,
                                 name = this.name,
-                                url = file,
-                                type = extractorLinkType
+                                url = url,
+                                type = if (url.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                             ).apply {
                                 this.referer = data
-                                this.quality = getQualityFromName(vidlink.label)
                             }
                         )
-                    } catch (e: Exception) {
-                        logError(e)
+                        foundLinks = true
                     }
                 }
             }
-            return true
+            
+            if (!foundLinks) {
+                Log.e(DEV, "No links found with any method")
+            }
+            
+            return foundLinks
             
         } catch (e: Exception) {
+            Log.e(DEV, "Error in loadLinks: ${e.message}")
+            e.printStackTrace()
             logError(e)
             return false
         }
@@ -219,7 +307,6 @@ class Vlxx : MainAPI() {
             if (lastIndex == -1) return null
             
             val jsonConfig = temp.substring(0, lastIndex + keyEnd.length)
-            Log.i(DEV, "jsonConfig $jsonConfig")
 
             return jsonConfig
                 .replace("\\r", "")
@@ -227,6 +314,7 @@ class Vlxx : MainAPI() {
                 .replace("\\\"", "\"")
                 .replace("\\\\\\/", "/")
                 .replace("\\n", "")
+                .replace("\\/", "/")
                 .trim()
             
         } catch (e: Exception) {
