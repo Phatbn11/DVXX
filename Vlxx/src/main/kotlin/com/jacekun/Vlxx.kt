@@ -41,7 +41,6 @@ class Vlxx : MainAPI() {
         
         Log.i(DEV, "Fetching homepage videos...")
         
-        // Try multiple selectors for homepage
         var elements = document.select("div#video-list > div.video-item")
             .mapNotNull {
                 val firstA = it.selectFirst("a")
@@ -61,15 +60,14 @@ class Vlxx : MainAPI() {
                 }
             }.distinctBy { it.url }
 
-        // If first selector fails, try alternative
         if (elements.isEmpty()) {
             Log.i(DEV, "First selector empty, trying alternative...")
-            elements = document.select("div.video-item, .video-block, .item")
+            elements = document.select("div.video-item")
                 .mapNotNull {
                     val link = fixUrlNull(it.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
                     val img = it.selectFirst("img")?.attr("data-original") 
                         ?: it.selectFirst("img")?.attr("src")
-                    val name = it.selectFirst(".video-name, .title, h3, h4")?.text() 
+                    val name = it.selectFirst(".video-name")?.text() 
                         ?: it.selectFirst("a")?.attr("title") 
                         ?: "Video"
                     Log.i(DEV, "Alt homepage item => $name | $link")
@@ -97,8 +95,7 @@ class Vlxx : MainAPI() {
         
         val document = getPage(searchUrl, mainUrl).document
         
-        // Try multiple selectors
-        var results = document.select(".video-list .video-item, #video-list .video-item")
+        var results = document.select(".video-list .video-item")
             .mapNotNull {
                 val link = fixUrlNull(it.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
                 val img = it.selectFirst("img")?.attr("data-original") 
@@ -117,15 +114,14 @@ class Vlxx : MainAPI() {
                 }
             }.distinctBy { it.url }
 
-        // Try alternative selector if empty
         if (results.isEmpty()) {
             Log.i(DEV, "First search selector empty, trying alternative...")
-            results = document.select("div.video-item, .video-block, .item")
+            results = document.select("div.video-item")
                 .mapNotNull {
                     val link = fixUrlNull(it.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
                     val img = it.selectFirst("img")?.attr("data-original") 
                         ?: it.selectFirst("img")?.attr("src")
-                    val name = it.selectFirst(".video-name, .title, h3")?.text() 
+                    val name = it.selectFirst(".video-name")?.text() 
                         ?: it.selectFirst("a")?.attr("title") 
                         ?: ""
                     Log.i(DEV, "Alt search result => $name | $link")
@@ -148,9 +144,11 @@ class Vlxx : MainAPI() {
         val doc = getPage(url, url).document
         Log.i(DEV, "Loading page: $url")
 
-        val container = doc.selectFirst("div#container, .container, .content")
-        val title = container?.selectFirst("h2, h1, .title")?.text() ?: "No Title"
-        val descript = container?.selectFirst("div.video-description, .description, p")?.text()
+        val container = doc.selectFirst("div#container")
+        val title = container?.selectFirst("h2")?.text() 
+            ?: container?.selectFirst("h1")?.text() 
+            ?: "No Title"
+        val descript = container?.selectFirst("div.video-description")?.text()
         val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")
             ?: doc.selectFirst("video")?.attr("poster")
         
@@ -178,14 +176,17 @@ class Vlxx : MainAPI() {
             Log.i(DEV, "Loading links for: $data")
             
             val pathSplits = data.split("/").filter { it.isNotEmpty() }
-            val id = pathSplits.getOrNull(pathSplits.size - 1) ?: pathSplits.last()
+            val id = pathSplits.lastOrNull() ?: return false
             Log.i(DEV, "Extracted ID: $id")
             
             val cookies = interceptor.getCookieHeaders(data).toMap()
             
+            val headers = cookies.toMutableMap()
+            headers["X-Requested-With"] = "XMLHttpRequest"
+            
             val res = app.post(
                 "$mainUrl/ajax.php",
-                headers = cookies + mapOf("X-Requested-With" to "XMLHttpRequest"),
+                headers = headers,
                 data = mapOf(
                     "vlxx_server" to "1",
                     "id" to id,
@@ -197,7 +198,6 @@ class Vlxx : MainAPI() {
             Log.i(DEV, "Ajax response length: ${res.length}")
             Log.i(DEV, "Ajax response preview: ${res.take(500)}")
 
-            // Try to find video URL in response with multiple methods
             var foundLinks = false
             
             // Method 1: Parse sources JSON
@@ -214,7 +214,7 @@ class Vlxx : MainAPI() {
                     Log.i(DEV, "Found JSON with pattern '$key': $json")
                     tryParseJson<List<Sources?>>(json)?.forEach { vidlink ->
                         vidlink?.file?.let { file ->
-                            Log.i(DEV, "Parsed link: $file (${vidlink.label})")
+                            Log.i(DEV, "Parsed link: $file")
                             callback.invoke(
                                 newExtractorLink(
                                     source = this.name,
@@ -251,34 +251,6 @@ class Vlxx : MainAPI() {
                         }
                     )
                     foundLinks = true
-                }
-            }
-            
-            // Method 3: Check for embed player in original page
-            if (!foundLinks) {
-                Log.i(DEV, "Trying to find embed player in page")
-                val doc = getPage(data, data).document
-                val iframeSrc = doc.selectFirst("iframe[src*=player], iframe[src*=embed]")?.attr("src")
-                if (iframeSrc != null) {
-                    Log.i(DEV, "Found iframe: $iframeSrc")
-                    val iframeDoc = getPage(fixUrl(iframeSrc), data).document
-                    val scriptText = iframeDoc.select("script").joinToString("\n") { it.html() }
-                    
-                    urlPattern.findAll(scriptText).forEach { match ->
-                        val url = match.groupValues[1]
-                        Log.i(DEV, "Found URL in iframe: $url")
-                        callback.invoke(
-                            newExtractorLink(
-                                source = this.name,
-                                name = this.name,
-                                url = url,
-                                type = if (url.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ).apply {
-                                this.referer = data
-                            }
-                        )
-                        foundLinks = true
-                    }
                 }
             }
             
