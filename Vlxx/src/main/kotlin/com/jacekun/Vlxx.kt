@@ -14,20 +14,19 @@ import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.nicehttp.NiceResponse
 
-
 class Vlxx : MainAPI() {
-    private val DEV = "DevDebug"
-    private val globaltvType = TvType.NSFW
+    private val DEV = "DevDebug"
+    private val globaltvType = TvType.NSFW
 
-    override var name = "Vlxx"
-    override var mainUrl = "https://vlxx.ms"
-    override val supportedTypes = setOf(TvType.NSFW)
-    override val hasDownloadSupport = false
-    override val hasMainPage = true
-    override val hasQuickSearch = false
-    private val interceptor = CloudflareKiller()
+    override var name = "Vlxx"
+    override var mainUrl = "https://vlxx.ms"
+    override val supportedTypes = setOf(TvType.NSFW)
+    override val hasDownloadSupport = false
+    override val hasMainPage = true
+    override val hasQuickSearch = false
+    private val interceptor = CloudflareKiller()
 
-    private suspend fun getPage(url: String, referer: String): NiceResponse {
+    private suspend fun getPage(url: String, referer: String): NiceResponse {
         var count = 0
         var resp = app.get(url, referer = referer, interceptor = interceptor)
         Log.i(DEV, "Page Response => ${resp}")
