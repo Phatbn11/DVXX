@@ -199,10 +199,11 @@ class Vlxx : MainAPI() {
                                             source = name,
                                             name = name,
                                             url = fileUrl,
-                                            referer = cleanData,
-                                            quality = getQualityFromName(source.label ?: ""),
                                             type = if (fileUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                        )
+                                        ).apply {
+                                            this.referer = cleanData
+                                            this.quality = getQualityFromName(source.label ?: "")
+                                        }
                                     )
                                     added++
                                 } catch (e: Exception) {
@@ -239,10 +240,10 @@ class Vlxx : MainAPI() {
                             source = name,
                             name = name,
                             url = videoUrl,
-                            referer = cleanData,
-                            quality = 0,
                             type = ExtractorLinkType.M3U8
-                        )
+                        ).apply {
+                            this.referer = cleanData
+                        }
                     )
                     count++
                 } catch (e: Exception) {
@@ -264,4 +265,3 @@ class Vlxx : MainAPI() {
         @JsonProperty("label") val label: String? = null
     )
 }
-
