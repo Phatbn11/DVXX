@@ -103,82 +103,142 @@ class Vlxx : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val cleanData = data.replace(" ", "").replace("\n", "").replace("\r", "").trim()
-        
-        Log.d(DEV, "START loadLinks")
-        Log.d(DEV, "original data = $data")
-        Log.d(DEV, "cleaned data = $cleanData")
-        
         return try {
-            val pathSegments = cleanData.trimEnd('/').split("/").filter { it.isNotEmpty() }
-            Log.d(DEV, "pathSegments = $pathSegments")
+            Log.d(DEV, "=== ENTER loadLinks ===")
             
-            val id = pathSegments.lastOrNull() ?: run {
-                Log.e(DEV, "Cannot extract ID from URL")
+            val cleanData = try {
+                data.replace(" ", "").replace("\n", "").replace("\r", "").trim()
+            } catch (e: Exception) {
+                Log.e(DEV, "Error cleaning data", e)
+                data
+            }
+            
+            Log.d(DEV, "original: $data")
+            Log.d(DEV, "cleaned: $cleanData")
+            
+            val pathSegments = try {
+                cleanData.trimEnd('/').split("/").filter { it.isNotEmpty() }
+            } catch (e: Exception) {
+                Log.e(DEV, "Error splitting path", e)
                 return false
             }
-            Log.d(DEV, "id = $id")
+            
+            Log.d(DEV, "segments: $pathSegments")
+            
+            val id = pathSegments.lastOrNull()
+            if (id == null) {
+                Log.e(DEV, "ID is null")
+                return false
+            }
+            
+            Log.d(DEV, "id: $id")
             
             val postUrl = "$mainUrl/ajax.php"
+            Log.d(DEV, "Posting to: $postUrl")
             
-            val response = app.post(
-                url = postUrl,
-                data = mapOf(
+            val postData = try {
+                mapOf(
                     "vlxx_server" to "1",
                     "id" to id,
                     "server" to "1"
-                ),
-                referer = cleanData
-            )
-            
-            Log.d(DEV, "response.code = ${response.code}")
-            val responseText = response.text
-            Log.d(DEV, "response.length = ${responseText.length}")
-            Log.d(DEV, "response = $responseText")
-            
-            if (responseText.isEmpty()) {
-                Log.e(DEV, "Empty response")
+                )
+            } catch (e: Exception) {
+                Log.e(DEV, "Error creating post data", e)
                 return false
             }
             
-            val sourcesRegex = Regex("sources\\s*:\\s*\\[([^\\]]+)\\]")
-            val match = sourcesRegex.find(responseText)
+            Log.d(DEV, "postData: $postData")
             
-            if (match != null) {
-                val sourcesJson = "[${match.groupValues[1]}]"
-                Log.d(DEV, "sourcesJson = $sourcesJson")
+            val response = try {
+                app.post(
+                    url = postUrl,
+                    data = postData,
+                    referer = cleanData
+                )
+            } catch (e: Exception) {
+                Log.e(DEV, "Error posting request", e)
+                return false
+            }
+            
+            Log.d(DEV, "Got response: ${response.code}")
+            
+            val responseText = try {
+                response.text
+            } catch (e: Exception) {
+                Log.e(DEV, "Error getting response text", e)
+                return false
+            }
+            
+            Log.d(DEV, "Response length: ${responseText.length}")
+            Log.d(DEV, "Response: $responseText")
+            
+            if (responseText.isEmpty() || responseText.length < 10) {
+                Log.e(DEV, "Response too short")
+                return false
+            }
+            
+            // Try simple pattern first
+            if (responseText.contains("sources")) {
+                Log.d(DEV, "Response contains 'sources'")
                 
-                val sources = tryParseJson<List<Sources>>(sourcesJson)
-                Log.d(DEV, "sources parsed = ${sources?.size}")
+                val sourcesRegex = Regex("sources\\s*:\\s*\\[([^\\]]+)\\]")
+                val match = sourcesRegex.find(responseText)
                 
-                sources?.forEach { source ->
-                    source.file?.let { fileUrl ->
-                        Log.d(DEV, "Adding link: $fileUrl")
-                        callback.invoke(
-                            newExtractorLink(
-                                source = name,
-                                name = name,
-                                url = fileUrl,
-                                type = if (fileUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ).apply {
-                                referer = cleanData
-                                quality = getQualityFromName(source.label)
+                if (match != null) {
+                    Log.d(DEV, "Regex matched")
+                    val sourcesJson = "[${match.groupValues[1]}]"
+                    Log.d(DEV, "JSON: $sourcesJson")
+                    
+                    try {
+                        val sources = tryParseJson<List<Sources>>(sourcesJson)
+                        Log.d(DEV, "Parsed ${sources?.size} sources")
+                        
+                        var added = 0
+                        sources?.forEach { source ->
+                            source.file?.let { fileUrl ->
+                                Log.d(DEV, "Adding: $fileUrl")
+                                try {
+                                    callback.invoke(
+                                        newExtractorLink(
+                                            source = name,
+                                            name = name,
+                                            url = fileUrl,
+                                            type = if (fileUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                        ).apply {
+                                            referer = cleanData
+                                            quality = getQualityFromName(source.label)
+                                        }
+                                    )
+                                    added++
+                                } catch (e: Exception) {
+                                    Log.e(DEV, "Error adding link", e)
+                                }
                             }
-                        )
+                        }
+                        
+                        Log.d(DEV, "Added $added links")
+                        return added > 0
+                        
+                    } catch (e: Exception) {
+                        Log.e(DEV, "Error parsing JSON", e)
                     }
+                } else {
+                    Log.d(DEV, "Regex did not match")
                 }
-                
-                return sources?.isNotEmpty() == true
             } else {
-                Log.e(DEV, "sources not found in response")
-                
-                val urlRegex = Regex("(https?://[^\\s\"']+\\.m3u8[^\\s\"']*)")
-                val urls = urlRegex.findAll(responseText)
-                
-                var found = false
-                urls.forEach { urlMatch ->
-                    val videoUrl = urlMatch.groupValues[1]
-                    Log.d(DEV, "Found fallback URL: $videoUrl")
+                Log.d(DEV, "Response does not contain 'sources'")
+            }
+            
+            // Fallback
+            Log.d(DEV, "Trying fallback URL extraction")
+            val urlRegex = Regex("(https?://[^\\s\"'<>]+\\.m3u8[^\\s\"'<>]*)")
+            val urls = urlRegex.findAll(responseText)
+            
+            var count = 0
+            urls.forEach { urlMatch ->
+                val videoUrl = urlMatch.groupValues[1]
+                Log.d(DEV, "Fallback found: $videoUrl")
+                try {
                     callback.invoke(
                         newExtractorLink(
                             source = name,
@@ -189,14 +249,17 @@ class Vlxx : MainAPI() {
                             referer = cleanData
                         }
                     )
-                    found = true
+                    count++
+                } catch (e: Exception) {
+                    Log.e(DEV, "Error adding fallback link", e)
                 }
-                
-                return found
             }
             
+            Log.d(DEV, "Fallback added $count links")
+            return count > 0
+            
         } catch (e: Exception) {
-            Log.e(DEV, "Exception in loadLinks: ${e.message}", e)
+            Log.e(DEV, "MAIN EXCEPTION in loadLinks", e)
             e.printStackTrace()
             logError(e)
             false
