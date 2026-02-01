@@ -103,8 +103,6 @@ class Vlxx : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return try {
-            Log.d(DEV, "=== ENTER loadLinks ===")
             val id = Regex("""(\d+)[/]*$""").find(data)?.groupValues?.get(1) 
                  ?: return false
             val res = app.post(
@@ -280,4 +278,5 @@ class Vlxx : MainAPI() {
         @JsonProperty("label") val label: String? = null
     )
 }
+
 
