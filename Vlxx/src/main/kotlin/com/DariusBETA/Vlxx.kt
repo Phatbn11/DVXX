@@ -98,29 +98,30 @@ class Vlxx : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            val cleanData = data.replace(" ", "").trim()
-            Log.d(DEV, "Loading: $cleanData")
-            
-            // Méthode 1: Extraire depuis la page HTML
-            val doc = app.get(cleanData, referer = mainUrl, interceptor = interceptor).document
-            val scriptText = doc.html()
-            
-            Log.d(DEV, "Got page, looking for sources...")
-            
-            // Chercher les sources dans les scripts
-            var foundLinks = 0
-            
-            // Pattern 1: sources:[{file:"url"}]
-            val sourcesPattern = Regex("""sources\s*:\s*\[\s*\{[^}]*file\s*:\s*["']([^"']+)["']""")
-            sourcesPattern.findAll(scriptText).forEach { match ->
-                val url = match.groupValues[1]
-                Log.d(DEV, "Found source: $url")
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    return try {
+        val cleanData = data.replace(" ", "").trim()
+        Log.d(DEV, "=== START loadLinks ===")
+        Log.d(DEV, "URL: $cleanData")
+        
+        // Récupérer la page
+        val response = app.get(cleanData, referer = mainUrl, interceptor = interceptor)
+        val html = response.text
+        
+        Log.d(DEV, "Page loaded, length: ${html.length}")
+        
+        var foundLinks = 0
+        
+        // Pattern 1: Chercher "file" suivi d'une URL
+        val filePattern1 = Regex("""file["'\s]*:["'\s]*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        filePattern1.findAll(html).forEach { match ->
+            val url = match.groupValues[1]
+            if (url.startsWith("http") && (url.contains(".m3u8") || url.contains(".mp4"))) {
+                Log.d(DEV, "Pattern1 found: $url")
                 try {
                     callback.invoke(
                         newExtractorLink(
@@ -137,74 +138,114 @@ class Vlxx : MainAPI() {
                     Log.e(DEV, "Error adding link", e)
                 }
             }
-            
-            if (foundLinks > 0) {
-                Log.d(DEV, "Found $foundLinks links from sources pattern")
-                return true
-            }
-            
-            // Pattern 2: Chercher directement les URLs .m3u8
-            val m3u8Pattern = Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""")
-            m3u8Pattern.findAll(scriptText).forEach { match ->
-                val url = match.groupValues[1]
-                Log.d(DEV, "Found m3u8: $url")
-                try {
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = name,
-                            url = url,
-                            type = ExtractorLinkType.M3U8
-                        ).apply {
-                            this.referer = cleanData
-                        }
-                    )
-                    foundLinks++
-                } catch (e: Exception) {
-                    Log.e(DEV, "Error adding m3u8", e)
-                }
-            }
-            
-            if (foundLinks > 0) {
-                Log.d(DEV, "Found $foundLinks total links")
-                return true
-            }
-            
-            // Pattern 3: Chercher les URLs .mp4
-            val mp4Pattern = Regex("""(https?://[^\s"'<>]+\.mp4[^\s"'<>]*)""")
-            mp4Pattern.findAll(scriptText).forEach { match ->
-                val url = match.groupValues[1]
-                Log.d(DEV, "Found mp4: $url")
-                try {
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = name,
-                            url = url,
-                            type = ExtractorLinkType.VIDEO
-                        ).apply {
-                            this.referer = cleanData
-                        }
-                    )
-                    foundLinks++
-                } catch (e: Exception) {
-                    Log.e(DEV, "Error adding mp4", e)
-                }
-            }
-            
-            Log.d(DEV, "Total links found: $foundLinks")
-            return foundLinks > 0
-            
-        } catch (e: Exception) {
-            Log.e(DEV, "Exception in loadLinks", e)
-            logError(e)
-            false
         }
+        
+        // Pattern 2: Toutes les URLs m3u8
+        val m3u8Pattern = Regex("""(https?://[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*)""")
+        m3u8Pattern.findAll(html).forEach { match ->
+            val url = match.groupValues[1].replace("\\", "")
+            Log.d(DEV, "M3U8 found: $url")
+            try {
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = url,
+                        type = ExtractorLinkType.M3U8
+                    ).apply {
+                        this.referer = cleanData
+                    }
+                )
+                foundLinks++
+            } catch (e: Exception) {
+                Log.e(DEV, "Error adding m3u8", e)
+            }
+        }
+        
+        // Pattern 3: Toutes les URLs mp4
+        val mp4Pattern = Regex("""(https?://[^\s"'<>\\]+\.mp4[^\s"'<>\\]*)""")
+        mp4Pattern.findAll(html).forEach { match ->
+            val url = match.groupValues[1].replace("\\", "")
+            Log.d(DEV, "MP4 found: $url")
+            try {
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = url,
+                        type = ExtractorLinkType.VIDEO
+                    ).apply {
+                        this.referer = cleanData
+                    }
+                )
+                foundLinks++
+            } catch (e: Exception) {
+                Log.e(DEV, "Error adding mp4", e)
+            }
+        }
+        
+        // Pattern 4: Sources JSON array
+        val sourcesPattern = Regex("""sources\s*:\s*(\[[^\]]+\])""", RegexOption.IGNORE_CASE)
+        sourcesPattern.find(html)?.let { match ->
+            val sourcesText = match.groupValues[1]
+            Log.d(DEV, "Found sources array: $sourcesText")
+            
+            // Extraire les URLs du JSON
+            val urlPattern = Regex("""["']?(https?://[^"']+)["']?""")
+            urlPattern.findAll(sourcesText).forEach { urlMatch ->
+                val url = urlMatch.groupValues[1]
+                if (url.contains(".m3u8") || url.contains(".mp4")) {
+                    Log.d(DEV, "JSON source: $url")
+                    try {
+                        callback.invoke(
+                            newExtractorLink(
+                                source = name,
+                                name = name,
+                                url = url,
+                                type = if (url.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ).apply {
+                                this.referer = cleanData
+                            }
+                        )
+                        foundLinks++
+                    } catch (e: Exception) {
+                        Log.e(DEV, "Error adding JSON source", e)
+                    }
+                }
+            }
+        }
+        
+        Log.d(DEV, "=== END loadLinks: found $foundLinks links ===")
+        
+        // Si aucun lien trouvé, logger un extrait du HTML pour debug
+        if (foundLinks == 0) {
+            Log.d(DEV, "HTML snippet (first 500 chars):")
+            Log.d(DEV, html.take(500))
+            Log.d(DEV, "HTML snippet (searching for 'video', 'player', 'source'):")
+            val keywords = listOf("video", "player", "source", "file", "m3u8", "mp4")
+            keywords.forEach { keyword ->
+                val index = html.indexOf(keyword, ignoreCase = true)
+                if (index >= 0) {
+                    val start = maxOf(0, index - 100)
+                    val end = minOf(html.length, index + 200)
+                    Log.d(DEV, "Around '$keyword': ${html.substring(start, end)}")
+                }
+            }
+        }
+        
+        return foundLinks > 0
+        
+    } catch (e: Exception) {
+        Log.e(DEV, "Exception in loadLinks", e)
+        e.printStackTrace()
+        logError(e)
+        false
     }
-
+}
     data class Sources(
         @JsonProperty("file") val file: String? = null,
         @JsonProperty("type") val type: String? = null,
         @JsonProperty("label") val label: String? = null
     )
 }
+
